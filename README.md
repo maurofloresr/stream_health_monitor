@@ -1,10 +1,12 @@
-# Stream Health Monitor
+# 📡 Stream Health Monitor
 
 A real-time health monitor for web endpoints. It concurrently checks a set of live services, measures their latency, status code and response body, evaluates configurable health rules, and exposes the current state through a Flask API and a lightweight dashboard.
 
 **Live demo:** https://stream-health-monitor.onrender.com
 
-![status](https://img.shields.io/badge/mypy-strict-blue) ![tests](https://img.shields.io/badge/tests-pytest-green)
+<img width="2048" height="1856" alt="light-mode" src="https://github.com/user-attachments/assets/19de81af-fae8-4c09-960b-966edb8e1ba0" />
+<img width="2048" height="1856" alt="dark-mode" src="https://github.com/user-attachments/assets/50e2f9aa-5952-4303-8acc-64190243c329" />
+
 
 ---
 
