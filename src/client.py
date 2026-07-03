@@ -5,7 +5,7 @@ import functools
 
 from datetime import datetime, timezone
 from collections.abc import Iterator
-from typing import ParamSpec, TypeVar
+from typing import ParamSpec, TypeVar, Literal
 from collections.abc import Callable, Awaitable
 
 from config import ENDPOINTS
@@ -57,6 +57,7 @@ def build_reports(results: list[tuple[Endpoint, Check | None]]) -> list[Report]:
     """Turn raw measurements into per-endpoint health reports."""
     reports: list[Report] = []
     for endpoint, measurement in results:
+        state: Literal["healthy", "degraded", "down"]
         # A missing measurement means the endpoint never answered: down, no rules to run.
         if measurement is None:
             state = "down"
