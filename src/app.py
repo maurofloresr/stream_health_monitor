@@ -1,5 +1,5 @@
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 from dataclasses import asdict
 from flask import Flask, jsonify, render_template, Response
 
@@ -43,7 +43,7 @@ def index() -> str:
 @app.route("/status")
 def status() -> Response:
     return jsonify({
-        "generated_at": datetime.now().isoformat(),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
         "services": [asdict(r) for r in latest_reports],
     })
 

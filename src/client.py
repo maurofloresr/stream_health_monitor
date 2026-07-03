@@ -3,7 +3,7 @@ import asyncio
 import time
 import functools
 
-from datetime import datetime
+from datetime import datetime, timezone
 from collections.abc import Iterator
 from typing import ParamSpec, TypeVar
 from collections.abc import Callable, Awaitable
@@ -86,7 +86,7 @@ def build_reports(results: list[tuple[Endpoint, Check | None]]) -> list[Report]:
                         status_code= measurement.status_code if measurement is not None else 0,
                         latency_ms = measurement.latency if measurement is not None else 0,
                         threshold= threshold,
-                        checked_at= datetime.now().isoformat()
+                        checked_at= datetime.now(timezone.utc).isoformat()
                         ))
                
     return reports
