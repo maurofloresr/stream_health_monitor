@@ -4,9 +4,9 @@ A real-time health monitor for web endpoints. It concurrently checks a set of li
 
 **Live demo:** https://stream-health-monitor.onrender.com
 
-<img width="2048" height="1856" alt="light-mode" src="https://github.com/user-attachments/assets/19de81af-fae8-4c09-960b-966edb8e1ba0" />
-<img width="2048" height="1856" alt="dark-mode" src="https://github.com/user-attachments/assets/50e2f9aa-5952-4303-8acc-64190243c329" />
-
+| Light | Dark |
+|---|---|
+| ![light-mode](https://github.com/user-attachments/assets/d5fb2887-b8bf-48ba-af89-5506f69871c8) | ![dark-mode](https://github.com/user-attachments/assets/5f60a87d-5b19-4c27-9d2b-a2306eac7717) |
 
 ---
 
