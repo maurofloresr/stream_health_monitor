@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Stream Health Monitor</title>
+
+<!--
+  STREAM HEALTH MONITOR :: FRONT-END (display only, no business logic here)
+  Reads the JSON from GET /status and renders it. Does not measure or decide health.
+
+  DATA CONTRACT :: JSON shape expected from GET /status
+  {
+    "generated_at": "...",
+    "summary": { "total": 5, "healthy": 3, "degraded": 1, "down": 1 },
+    "services": [ { "name": "...", "url": "...", "state": "healthy", "latency_ms": 142, ... } ]
+  }
+  Notes: summary optional; rules optional per service; the latency chart is built
+  client-side across polls (backend sends only the current latency_ms).
+-->
+
+<style>
+  :root {
+    --bg:#e9edf4; --bg-2:#eef2f8;
+    --surface:rgba(255,255,255,0.72); --surface-solid:#ffffff;
+    --border:rgba(15,27,45,0.07);
+    --ink:#0f1b2d; --ink-soft:#5a6b82; --ink-faint:#93a1b5;
+    --accent:#2f6bff; --accent-soft:rgba(47,107,255,0.10);
+    --healthy:#10b981; --healthy-bg:rgba(16,185,129,0.12);
+    --degraded:#f59e0b; --degraded-bg:rgba(245,158,11,0.13);
+    --down:#ef4444; --down-bg:rgba(239,68,68,0.12);
+    --readout-bg:rgba(15,27,45,0.025);
+    --shimmer:rgba(255,255,255,0.6);
+    --r-lg:24px; --r-md:18px; --r-sm:12px;
+    --shadow:0 8px 30px rgba(15,27,45,0.08); --shadow-sm:0 2px 10px rgba(15,27,45,0.05);
+  }
+  [data-theme="dark"] {
+    --bg:#0a111f; --bg-2:#0e1626;
+    --surface:rgba(255,255,255,0.05); --surface-solid:#131d31;
+    --border:rgba(255,255,255,0.09);
+    --ink:#e7eef9; --ink-soft:#9bacc4; --ink-faint:#62748d;
+    --accent:#5b8bff; --accent-soft:rgba(91,139,255,0.16);
+    --healthy-bg:rgba(16,185,129,0.18);
+    --degraded-bg:rgba(245,158,11,0.18);
+    --down-bg:rgba(239,68,68,0.18);
+    --readout-bg:rgba(255,255,255,0.04);
+    --shimmer:rgba(255,255,255,0.10);
+    --shadow:0 8px 30px rgba(0,0,0,0.35); --shadow-sm:0 2px 10px rgba(0,0,0,0.3);
+  }
+
+  * { box-sizing:border-box; margin:0; padding:0; }
+  html, body { height:100%; }
+  body {
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color:var(--ink);
+    background:
+      radial-gradient(900px 500px at 85% -5%, rgba(47,107,255,0.10), transparent 60%),
+      radial-gradient(700px 600px at -5% 110%, rgba(16,185,129,0.08), transparent 55%),
+      linear-gradient(180deg, var(--bg-2), var(--bg));
+    background-attachment:fixed; min-height:100vh; -webkit-font-smoothing:antialiased;
+    transition: background 0.3s, color 0.3s;
+  }
+  .tnum { font-variant-numeric:tabular-nums; font-feature-settings:"tnum" 1; }
+
+  .app { display:flex; min-height:100vh; }
+
+  .sidebar {
+    width:76px; flex:0 0 76px; padding:24px 0;
+    display:flex; flex-direction:column; align-items:center; gap:24px;
+  }
+  /* the logo is just a brand mark, NOT a button */
+  .logo {
+    width:44px; height:44px; border-radius:14px; background:var(--accent); color:#fff;
+    display:grid; place-items:center; font-weight:800; font-size:20px;
+    box-shadow:0 6px 18px rgba(47,107,255,0.4); letter-spacing:-0.5px;
+  }
+  .nav { display:flex; flex-direction:column; gap:14px; margin-top:8px; flex:1; }
+  .nav-bottom { display:flex; flex-direction:column; gap:14px; }
+  .nav button, .nav-bottom button {
+    width:44px; height:44px; border:none; border-radius:14px;
+    background:var(--surface); color:var(--ink-soft); cursor:pointer;
+    display:grid; place-items:center; box-shadow:var(--shadow-sm);
+    transition:background 0.15s, color 0.15s, transform 0.15s;
+  }
+  .nav button:hover, .nav-bottom button:hover { transform:translateY(-1px); color:var(--ink); }
+  .nav button.active { background:var(--accent); color:#fff; box-shadow:0 6px 16px rgba(47,107,255,0.35); }
+  .nav button svg, .nav-bottom button svg { width:20px; height:20px; }
+
+  .main { flex:1; padding:28px 32px 48px; max-width:1320px; }
+
+  .header { display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap; margin-bottom:28px; }
+  .header h1 { font-size:30px; font-weight:800; letter-spacing:-1px; }
+  .header .sub { color:var(--ink-soft); font-size:14px; margin-top:2px; }
+  .pulse-dot { display:inline-block; width:9px; height:9px; border-radius:50%; background:var(--healthy); margin-right:7px; box-shadow:0 0 0 0 rgba(16,185,129,0.5); animation:pulse 2s infinite; vertical-align:middle; }
+  @keyframes pulse { 0%{box-shadow:0 0 0 0 rgba(16,185,129,0.45);} 70%{box-shadow:0 0 0 8px rgba(16,185,129,0);} 100%{box-shadow:0 0 0 0 rgba(16,185,129,0);} }
+
+  .controls { display:flex; align-items:center; gap:12px; }
+  .updated { font-size:13px; color:var(--ink-soft); }
+  .updated b { color:var(--ink); font-weight:600; }
+  .toggle { display:flex; align-items:center; gap:8px; font-size:13px; color:var(--ink-soft); }
+  .switch { position:relative; width:40px; height:22px; }
+  .switch input { display:none; }
+  .switch span { position:absolute; inset:0; border-radius:999px; background:var(--ink-faint); transition:background 0.2s; cursor:pointer; }
+  .switch span::after { content:""; position:absolute; top:3px; left:3px; width:16px; height:16px; border-radius:50%; background:#fff; transition:transform 0.2s; }
+  .switch input:checked + span { background:var(--accent); }
+  .switch input:checked + span::after { transform:translateX(18px); }
+
+  .btn { border:none; cursor:pointer; background:var(--accent); color:#fff; padding:10px 16px; border-radius:12px; font-size:14px; font-weight:600; display:inline-flex; align-items:center; gap:8px; box-shadow:0 6px 16px rgba(47,107,255,0.3); transition:transform 0.15s; }
+  .btn:hover { transform:translateY(-1px); }
+  .btn svg { width:16px; height:16px; }
+  .btn.spin svg { animation:rot 0.8s linear infinite; }
+  @keyframes rot { to { transform:rotate(360deg); } }
+
+  .section-label { display:flex; align-items:center; gap:9px; font-size:14px; font-weight:700; color:var(--ink); margin:8px 0 14px; }
+  .section-label::before { content:""; width:7px; height:7px; border-radius:50%; background:var(--accent); }
+
+  .summary { display:grid; grid-template-columns:repeat(4,1fr); gap:16px; margin-bottom:32px; }
+  .vital { background:var(--surface); backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px); border:1px solid var(--border); border-radius:var(--r-md); padding:18px 20px; box-shadow:var(--shadow-sm); display:flex; align-items:center; gap:14px; }
+  .vital .icon { width:46px; height:46px; border-radius:13px; display:grid; place-items:center; flex:0 0 46px; }
+  .vital .icon svg { width:22px; height:22px; }
+  .vital .meta .num { font-size:28px; font-weight:800; line-height:1; letter-spacing:-1px; }
+  .vital .meta .cap { font-size:12.5px; color:var(--ink-soft); margin-top:5px; font-weight:500; }
+  .icon.total { background:var(--accent-soft); color:var(--accent); }
+  .icon.healthy { background:var(--healthy-bg); color:var(--healthy); }
+  .icon.degraded { background:var(--degraded-bg); color:var(--degraded); }
+  .icon.down { background:var(--down-bg); color:var(--down); }
+
+  .grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(330px,1fr)); gap:18px; }
+  .card { background:var(--surface); backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px); border:1px solid var(--border); border-radius:var(--r-lg); padding:20px; box-shadow:var(--shadow); position:relative; overflow:hidden; transition:transform 0.15s; }
+  .card:hover { transform:translateY(-2px); }
+  .card .edge { position:absolute; left:0; top:0; bottom:0; width:4px; }
+  .card[data-state="healthy"] .edge { background:var(--healthy); }
+  .card[data-state="degraded"] .edge { background:var(--degraded); }
+  .card[data-state="down"] .edge { background:var(--down); }
+  .card-top { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
+  .card-name { font-size:17px; font-weight:700; letter-spacing:-0.3px; }
+  .card-url { font-size:12.5px; color:var(--ink-faint); margin-top:3px; word-break:break-all; }
+  .badge { flex:0 0 auto; font-size:12px; font-weight:700; text-transform:capitalize; padding:6px 12px; border-radius:999px; display:inline-flex; align-items:center; gap:6px; }
+  .badge::before { content:""; width:7px; height:7px; border-radius:50%; background:currentColor; }
+  .badge[data-state="healthy"] { background:var(--healthy-bg); color:var(--healthy); }
+  .badge[data-state="degraded"] { background:var(--degraded-bg); color:var(--degraded); }
+  .badge[data-state="down"] { background:var(--down-bg); color:var(--down); }
+  .ecg { margin:18px 0 14px; height:56px; width:100%; }
+  .ecg svg { width:100%; height:100%; display:block; }
+  .readouts { display:flex; gap:10px; }
+  .readout { flex:1; background:var(--readout-bg); border-radius:var(--r-sm); padding:11px 13px; }
+  .readout .k { font-size:11px; color:var(--ink-soft); font-weight:600; text-transform:uppercase; letter-spacing:0.4px; }
+  .readout .v { font-size:19px; font-weight:800; margin-top:4px; letter-spacing:-0.5px; }
+  .readout .v small { font-size:12px; font-weight:600; color:var(--ink-faint); }
+  .rules { margin-top:14px; display:flex; flex-direction:column; gap:7px; }
+  .rule { display:flex; align-items:center; gap:8px; font-size:12.5px; color:var(--ink-soft); }
+  .rule .tick { width:16px; height:16px; flex:0 0 16px; }
+  .rule.pass .tick { color:var(--healthy); }
+  .rule.fail .tick { color:var(--down); }
+  .rule .detail { color:var(--ink-faint); }
+
+  .panel { background:var(--surface); border:1px solid var(--border); border-radius:var(--r-lg); box-shadow:var(--shadow); padding:48px 32px; text-align:center; }
+  .panel h2 { font-size:20px; margin-bottom:8px; }
+  .panel p { color:var(--ink-soft); font-size:14px; max-width:460px; margin:0 auto 18px; }
+  .panel code { background:var(--readout-bg); padding:2px 7px; border-radius:6px; font-size:13px; }
+  .skeleton { display:grid; grid-template-columns:repeat(auto-fill, minmax(330px,1fr)); gap:18px; }
+  .sk-card { height:230px; border-radius:var(--r-lg); background:var(--surface); border:1px solid var(--border); position:relative; overflow:hidden; }
+  .sk-card::after { content:""; position:absolute; inset:0; background:linear-gradient(90deg, transparent, var(--shimmer), transparent); transform:translateX(-100%); animation:shimmer 1.4s infinite; }
+  @keyframes shimmer { to { transform:translateX(100%); } }
+  .hidden { display:none !important; }
+
+  @media (max-width:720px) {
+    .sidebar { display:none; }
+    .main { padding:20px 18px 40px; }
+    .summary { grid-template-columns:repeat(2,1fr); }
+    .header h1 { font-size:24px; }
+  }
+  @media (prefers-reduced-motion:reduce) {
+    .pulse-dot, .sk-card::after, .btn.spin svg { animation:none !important; }
+    .card, .nav button, .nav-bottom button, .btn, body { transition:none !important; }
+  }
+  :focus-visible { outline:3px solid rgba(47,107,255,0.45); outline-offset:2px; border-radius:8px; }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <aside class="sidebar">
+    <!-- brand mark, not interactive -->
+    <div class="logo">S<span style="font-size:13px;vertical-align:super">+</span></div>
+    <nav class="nav">
+      <button class="active" title="Overview" aria-label="Overview">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+      </button>
+    </nav>
+    <div class="nav-bottom">
+      <button id="themeBtn" title="Toggle theme" aria-label="Toggle dark mode"></button>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="header">
+      <div>
+        <h1>Stream Health Monitor</h1>
+        <div class="sub"><span class="pulse-dot"></span>Live endpoint vitals</div>
+      </div>
+      <div class="controls">
+        <span class="updated">Updated <b id="updated">never</b></span>
+        <label class="toggle">Auto
+          <span class="switch"><input type="checkbox" id="autoToggle" checked /><span></span></span>
+        </label>
+        <button class="btn" id="refreshBtn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
+          Refresh
+        </button>
+      </div>
+    </header>
+
+    <div class="section-label">Overview</div>
+    <section class="summary" id="summary"></section>
+
+    <div class="section-label">Monitored services</div>
+
+    <div class="skeleton" id="loading">
+      <div class="sk-card"></div><div class="sk-card"></div><div class="sk-card"></div>
+    </div>
+
+    <div class="panel hidden" id="error">
+      <h2>Can't reach the monitor</h2>
+      <p>The dashboard tried to read <code id="errUrl"></code> and got no response. Check that the backend is running and that <code>/status</code> is reachable from here.</p>
+      <button class="btn" id="retryBtn">Try again</button>
+    </div>
+
+    <div class="panel hidden" id="empty">
+      <h2>No services yet</h2>
+      <p>The monitor is up but no endpoints are configured. Add endpoints to your monitor config and they will show on the next refresh.</p>
+    </div>
+
+    <section class="grid hidden" id="grid"></section>
+  </main>
+</div>
+
+<script>
+/* ============================================================================
+   ::  MARKER 1 of 3  ::  CONFIG
+   - DEMO_MODE true  -> fake data so you can preview the UI now.
+   - DEMO_MODE false -> hits API_BASE + STATUS_PATH.
+   - API_BASE "" if served from the SAME origin as Flask (simplest, no CORS).
+   ============================================================================ */
+const CONFIG = {
+  DEMO_MODE: false,                 // <-- flip to false when backend is ready
+  API_BASE: "",                    // <-- e.g. "https://your-app.onrender.com"
+  STATUS_PATH: "/status",
+  POLL_INTERVAL_MS: 20000
+};
+/* ========================================================================== */
+
+const HISTORY_MAX = 30;
+const latencyHistory = new Map();
+let pollTimer = null;
+let firstLoadDone = false;
+let lastGeneratedAt = null;        // kept so relative times can tick without polling
+
+
+function readSummary(data) {
+  const s = data["summary"];
+  if (s) return { total:s["total"], healthy:s["healthy"], degraded:s["degraded"], down:s["down"] };
+  const services = data["services"] || [];
+  const count = (st) => services.filter(x => x["state"] === st).length;
+  return { total:services.length, healthy:count("healthy"), degraded:count("degraded"), down:count("down") };
+}
+function readService(obj) {
+  return {
+    name:obj["name"], url:obj["url"], state:obj["state"],
+    latencyMs:obj["latency_ms"], statusCode:obj["status_code"], checkedAt:obj["checked_at"],
+    rules:(obj["rules"] || []).map(r => ({ rule:r["rule"], passed:r["passed"], detail:r["detail"] }))
+  };
+}
+function readGeneratedAt(data) { return data["generated_at"]; }
+
+async function fetchStatus() {
+  if (CONFIG.DEMO_MODE) return generateMockStatus();
+  const url = CONFIG.API_BASE + CONFIG.STATUS_PATH;
+  const res = await fetch(url, { headers: { "Accept": "application/json" } });
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  return await res.json();
+}
+
+function show(id){ document.getElementById(id).classList.remove("hidden"); }
+function hide(id){ document.getElementById(id).classList.add("hidden"); }
+
+function pushHistory(name, latency) {
+  if (!latencyHistory.has(name)) latencyHistory.set(name, []);
+  const arr = latencyHistory.get(name);
+  arr.push(typeof latency === "number" ? latency : 0);
+  if (arr.length > HISTORY_MAX) arr.shift();
+  return arr;
+}
+
+function sparkline(points, color) {
+  if (points.length < 2)
+    return '<svg viewBox="0 0 300 56" preserveAspectRatio="none"><line x1="0" y1="28" x2="300" y2="28" stroke="'+color+'" stroke-width="2" stroke-dasharray="3 4" opacity="0.4"/></svg>';
+  const w=300,h=56,pad=4, max=Math.max(...points), min=Math.min(...points), range=(max-min)||1, stepX=w/(points.length-1);
+  const coords = points.map((p,i)=>[i*stepX, h-pad-((p-min)/range)*(h-pad*2)]);
+  const line = coords.map((c,i)=>(i===0?"M":"L")+c[0].toFixed(1)+" "+c[1].toFixed(1)).join(" ");
+  const area = line+" L"+w+" "+h+" L0 "+h+" Z";
+  const gid = "g"+Math.random().toString(36).slice(2,8);
+  return '<svg viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="none"><defs><linearGradient id="'+gid+'" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="'+color+'" stop-opacity="0.25"/><stop offset="100%" stop-color="'+color+'" stop-opacity="0"/></linearGradient></defs><path d="'+area+'" fill="url(#'+gid+')"/><path d="'+line+'" fill="none" stroke="'+color+'" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/></svg>';
+}
+
+const STATE_COLOR = { healthy:"#10b981", degraded:"#f59e0b", down:"#ef4444" };
+
+function renderSummary(sum) {
+  const items = [
+    { label:"Total services", value:sum.total, cls:"total", icon:'<path d="M4 6h16M4 12h16M4 18h16"/>' },
+    { label:"Healthy", value:sum.healthy, cls:"healthy", icon:'<path d="M20 6 9 17l-5-5"/>' },
+    { label:"Degraded", value:sum.degraded, cls:"degraded", icon:'<path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/>' },
+    { label:"Down", value:sum.down, cls:"down", icon:'<path d="M18 6 6 18M6 6l12 12"/>' }
+  ];
+  document.getElementById("summary").innerHTML = items.map(it =>
+    '<div class="vital"><div class="icon '+it.cls+'"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">'+it.icon+'</svg></div><div class="meta"><div class="num tnum">'+(it.value ?? 0)+'</div><div class="cap">'+it.label+'</div></div></div>'
+  ).join("");
+}
+
+function timeAgo(iso) {
+  if (!iso) return "";
+  const diff = (Date.now() - new Date(iso).getTime())/1000;
+  if (isNaN(diff)) return "";
+  if (diff < 60) return Math.max(0, Math.round(diff))+"s ago";
+  if (diff < 3600) return Math.round(diff/60)+"m ago";
+  return Math.round(diff/3600)+"h ago";
+}
+
+function renderCard(svc) {
+  const color = STATE_COLOR[svc.state] || "#94a3b8";
+  const hist = pushHistory(svc.name, svc.latencyMs);
+  const tickPass = '<svg class="tick" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>';
+  const tickFail = '<svg class="tick" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>';
+  const rulesHtml = svc.rules.map(r =>
+    '<div class="rule '+(r.passed?"pass":"fail")+'">'+(r.passed?tickPass:tickFail)+'<span>'+escapeHtml(r.rule)+'</span>'+(r.detail?'<span class="detail">&middot; '+escapeHtml(r.detail)+'</span>':'')+'</div>'
+  ).join("");
+  return '<article class="card" data-state="'+svc.state+'"><div class="edge"></div>'+
+    '<div class="card-top"><div><div class="card-name">'+escapeHtml(svc.name||"Unnamed")+'</div><div class="card-url">'+escapeHtml(svc.url||"")+'</div></div>'+
+    '<span class="badge" data-state="'+svc.state+'">'+escapeHtml(svc.state||"unknown")+'</span></div>'+
+    '<div class="ecg">'+sparkline(hist,color)+'</div>'+
+    '<div class="readouts">'+
+      '<div class="readout"><div class="k">Latency</div><div class="v tnum">'+(svc.latencyMs ?? "--")+' <small>ms</small></div></div>'+
+      '<div class="readout"><div class="k">Status</div><div class="v tnum">'+(svc.statusCode ?? "--")+'</div></div>'+
+      '<div class="readout"><div class="k">Checked</div><div class="v checked-ago" data-ts="'+(svc.checkedAt||"")+'" style="font-size:14px;padding-top:3px">'+(timeAgo(svc.checkedAt)||"--")+'</div></div>'+
+    '</div>'+
+    (rulesHtml?'<div class="rules">'+rulesHtml+'</div>':'')+
+  '</article>';
+}
+
+function escapeHtml(str) {
+  return String(str ?? "").replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+}
+
+function render(data) {
+  renderSummary(readSummary(data));
+  const services = (data["services"]||[]).map(readService);
+  hide("loading"); hide("error");
+  if (services.length === 0) { hide("grid"); show("empty"); }
+  else {
+    hide("empty");
+    document.getElementById("grid").innerHTML = services.map(renderCard).join("");
+    show("grid");
+  }
+  lastGeneratedAt = readGeneratedAt(data);
+  refreshTimes();
+  firstLoadDone = true;
+}
+
+// display-only: keeps the "X ago" labels counting up even when auto is OFF
+function refreshTimes() {
+  document.getElementById("updated").textContent = lastGeneratedAt ? (timeAgo(lastGeneratedAt) || "just now") : "never";
+  document.querySelectorAll(".checked-ago").forEach(el => {
+    const ts = el.getAttribute("data-ts");
+    el.textContent = ts ? (timeAgo(ts) || "--") : "--";
+  });
+}
+
+function renderError() {
+  hide("loading"); hide("grid"); hide("empty");
+  document.getElementById("errUrl").textContent = CONFIG.DEMO_MODE ? "(demo mode)" : (CONFIG.API_BASE + CONFIG.STATUS_PATH);
+  show("error");
+}
+
+async function poll() {
+  const btn = document.getElementById("refreshBtn");
+  btn.classList.add("spin");
+  try { render(await fetchStatus()); }
+  catch (err) { console.error("[monitor] poll failed:", err); if (!firstLoadDone) renderError(); }
+  finally { btn.classList.remove("spin"); }
+}
+
+function startAuto() { stopAuto(); pollTimer = setInterval(poll, CONFIG.POLL_INTERVAL_MS); }
+function stopAuto() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } }
+
+/* ---- theme toggle (in-memory; resets on reload to stay safe in previews) ---- */
+const SUN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.4 1.4M17.6 17.6 19 19M19 5l-1.4 1.4M6.4 17.6 5 19"/></svg>';
+const MOON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"/></svg>';
+let dark = false;
+const themeBtn = document.getElementById("themeBtn");
+function applyTheme() {
+  document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+  themeBtn.innerHTML = dark ? SUN : MOON;   // show the icon of what you switch TO
+}
+themeBtn.addEventListener("click", () => { dark = !dark; applyTheme(); });
+applyTheme();
+
+document.getElementById("refreshBtn").addEventListener("click", poll);
+document.getElementById("retryBtn").addEventListener("click", () => { show("loading"); hide("error"); poll(); });
+document.getElementById("autoToggle").addEventListener("change", (e) => { e.target.checked ? startAuto() : stopAuto(); });
+
+poll();
+startAuto();
+setInterval(refreshTimes, 1000);   // tick the relative times independently of polling
+
+/* ============================================================================
+   DEMO DATA  ::  ignore once DEMO_MODE is false. Fake numbers, front scaffolding.
+   ============================================================================ */
+function generateMockStatus() {
+  const base = [
+    { name:"GitHub API", url:"https://api.github.com", baseLat:130, state:"healthy" },
+    { name:"httpbin 200", url:"https://httpbin.org/status/200", baseLat:240, state:"healthy" },
+    { name:"httpbin delay", url:"https://httpbin.org/delay/3", baseLat:720, state:"degraded" },
+    { name:"Open-Meteo", url:"https://api.open-meteo.com/v1", baseLat:180, state:"healthy" },
+    { name:"httpbin 500", url:"https://httpbin.org/status/500", baseLat:0, state:"down" }
+  ];
+  const jitter = (n) => Math.max(0, Math.round(n + (Math.random()-0.5)*n*0.4));
+  const services = base.map(b => {
+    const lat = b.state === "down" ? 0 : jitter(b.baseLat);
+    const code = b.state === "down" ? 500 : 200;
+    return {
+      name:b.name, url:b.url, state:b.state, latency_ms:lat, status_code:code,
+      checked_at:new Date().toISOString(),
+      rules:[
+        { rule:"StatusCodeRule", passed:b.state!=="down", detail: code===200?"200 OK":code+" error" },
+        { rule:"LatencyRule", passed:b.state==="healthy", detail: lat+"ms vs 500ms budget" }
+      ]
+    };
+  });
+  const count = (st) => services.filter(s => s.state === st).length;
+  return { generated_at:new Date().toISOString(), summary:{ total:services.length, healthy:count("healthy"), degraded:count("degraded"), down:count("down") }, services };
+}
+/* ========================================================================== */
+</script>
+</body>
+</html>
